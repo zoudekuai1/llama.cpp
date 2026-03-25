@@ -1,0 +1,69 @@
+name: Release (Win10兼容x64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create new release'
+        required: true
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_ARGS: "-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON"
+
+jobs:
+  windows-x64-win10-compat:
+    # 关键：用 windows-2022 才能兼容 Win10
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Ninja
+        run: choco install ninja
+
+      - name: Build
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cmake -S . -B build -G "Ninja Multi-Config" ^
+          -DCMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake ^
+          -DLLAMA_BUILD_BORINGSSL=ON ^
+          -DGGML_NATIVE=OFF ^
+          -DGGML_OPENMP=OFF ^
+          -DBUILD_SHARED_LIBS=OFF ^
+          -DLLAMA_VCPKG_TOOLCHAIN=OFF ^
+          -DCMAKE_SYSTEM_VERSION=10.0.17763.0 ^
+          ${{ env.CMAKE_ARGS }}
+          cmake --build build --config Release
+
+      - name: Pack
+        run: 7z a -snl llama-bin-win-cpu-x64-win10.zip .\build\bin\Release\*
+
+      - uses: actions/upload-artifact@v6
+        with:
+          path: llama-bin-win-cpu-x64-win10.zip
+          name: llama-bin-win-cpu-x64-win10.zip
+
+  release:
+    if: ${{ github.event.inputs.create_release == 'true' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    needs: [windows-x64-win10-compat]
+
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/llama-bin-win-cpu-x64-win10.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
