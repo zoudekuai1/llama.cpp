@@ -23,6 +23,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Determine tag name
+        id: tag
+        uses: ./.github/actions/get-tag-name
+
       - name: Install Ninja
         run: choco install ninja
 
@@ -40,7 +44,6 @@ jobs:
           -DCMAKE_SYSTEM_VERSION=10.0.17763.0 ^
           ${{ env.CMAKE_ARGS }}
           cmake --build build --config Release
-
       - name: Pack
         run: 7z a -snl llama-bin-win-cpu-x64-win10.zip .\build\bin\Release\*
 
@@ -53,7 +56,7 @@ jobs:
     if: ${{ github.event.inputs.create_release == 'true' }}
     permissions:
       contents: write
-    runs-on: ubuntu-latest
+    runs-on: windows-2022
     needs: [windows-x64-win10-compat]
 
     steps:
@@ -63,6 +66,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.name }}
           files: |
             artifacts/llama-bin-win-cpu-x64-win10.zip
         env:
