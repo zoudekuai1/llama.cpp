@@ -1,17 +1,39 @@
 name: CI (Linux + Windows Only)
 
 on:
-  workflow_dispatch:  # 允许手动触发（你需要这个）
+  workflow_dispatch: # allows manual triggering
+    inputs:
+      create_release:
+        description: 'Create new release'
+        required: true
+        type: boolean
   push:
-    branches: [ master ]
-    paths: [ '**.h', '**.hpp', '**.c', '**.cpp', '**/CMakeLists.txt' ]
-  pull_request:
-    branches: [ master ]
-    paths: [ '**.h', '**.hpp', '**.c', '**.cpp', '**/CMakeLists.txt' ]
+    branches:
+      - master
+    paths: [
+      '.github/workflows/release.yml',
+      '**/CMakeLists.txt',
+      '**/.cmake',
+      '**/*.h',
+      '**/*.hpp',
+      '**/*.c',
+      '**/*.cpp',
+      '**/*.cu',
+      '**/*.cuh',
+      '**/*.swift',
+      '**/*.m',
+      '**/*.metal',
+      '**/*.comp',
+      '**/*.glsl'
+    ]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
   cancel-in-progress: true
+
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+  CMAKE_ARGS: "-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON -DGGML_RPC=ON"
 
 jobs:
   # ==========================
@@ -41,23 +63,51 @@ jobs:
   # ==========================
   windows-x64:
     runs-on: windows-2025
+    strategy:
+      matrix:
+        include:
+          - arch: 'x64'
+          - arch: 'arm64'
+
     steps:
-      - uses: actions/checkout@v6
-
-      - name: 安装 Ninja
-        run: choco install ninja
-
-      - name: 编译（静态链接，无 DLL 依赖）
-        run: |
-          cmake -S . -B build -G "Ninja Multi-Config" `
-            -DCMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake `
-            -DGGML_NATIVE=OFF `
-            -DLLAMA_BUILD_SERVER=ON `
-            -DBUILD_SHARED_LIBS=OFF
-          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
-
-      - name: 上传 Windows 构建包
-        uses: actions/upload-artifact@v4
+      - name: Clone
+        uses: actions/checkout@v6
         with:
-          name: llama-bin-win-cpu-x64
-          path: build/bin/Release/
+          fetch-depth: 0
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          key: windows-latest-cpu-${{ matrix.arch }}
+          variant: ccache
+          evict-old-files: 1d
+
+      - name: Install Ninja
+        run: |
+          choco install ninja
+
+      - name: Build
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch == 'x64' && 'x64' || 'amd64_arm64' }}
+          cmake -S . -B build -G "Ninja Multi-Config" ^
+            -D CMAKE_TOOLCHAIN_FILE=cmake/${{ matrix.arch }}-windows-llvm.cmake ^
+            -DLLAMA_BUILD_BORINGSSL=ON ^
+            -DGGML_NATIVE=OFF ^
+            -DGGML_BACKEND_DL=ON ^
+            -DGGML_CPU_ALL_VARIANTS=${{ matrix.arch == 'x64' && 'ON' || 'OFF' }} ^
+            -DGGML_OPENMP=ON ^
+            ${{ env.CMAKE_ARGS }}
+          cmake --build build --config Release
+
+      - name: Pack artifacts
+        id: pack_artifacts
+        run: |
+          Copy-Item "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\14.44.35112\debug_nonredist\${{ matrix.arch }}\Microsoft.VC143.OpenMP.LLVM\libomp140.${{ matrix.arch == 'x64' && 'x86_64' || 'aarch64' }}.dll" .\build\bin\Release\
+          7z a -snl llama-bin-win-cpu-${{ matrix.arch }}.zip .\build\bin\Release\*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          path: llama-bin-win-cpu-${{ matrix.arch }}.zip
+          name: llama-bin-win-cpu-${{ matrix.arch }}.zip
