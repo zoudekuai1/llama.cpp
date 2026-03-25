@@ -1,0 +1,63 @@
+name: CI (Linux + Windows Only)
+
+on:
+  workflow_dispatch:  # 允许手动触发（你需要这个）
+  push:
+    branches: [ master ]
+    paths: [ '**.h', '**.hpp', '**.c', '**.cpp', '**/CMakeLists.txt' ]
+  pull_request:
+    branches: [ master ]
+    paths: [ '**.h', '**.hpp', '**.c', '**.cpp', '**/CMakeLists.txt' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ==========================
+  # Linux x64 静态构建（无系统依赖）
+  # ==========================
+  linux-x64:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 安装依赖
+        run: sudo apt update && sudo apt install -y build-essential cmake
+
+      - name: 编译（静态链接，不依赖系统）
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_STATIC=ON -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --config Release -j $(nproc)
+
+      - name: 上传 Linux 构建包
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-bin-linux-x64
+          path: build/bin/
+
+  # ==========================
+  # Windows x64 静态构建（无系统依赖）
+  # ==========================
+  windows-x64:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 安装 Ninja
+        run: choco install ninja
+
+      - name: 编译（静态链接，无 DLL 依赖）
+        run: |
+          cmake -S . -B build -G "Ninja Multi-Config" `
+            -DCMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake `
+            -DGGML_NATIVE=OFF `
+            -DLLAMA_BUILD_SERVER=ON `
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+
+      - name: 上传 Windows 构建包
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-bin-win-cpu-x64
+          path: build/bin/Release/
