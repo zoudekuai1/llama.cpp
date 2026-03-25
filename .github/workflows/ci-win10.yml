@@ -1,73 +1,114 @@
-name: Release (Win10兼容x64)
+name: CI (Win10兼容x64)
 
 on:
-  workflow_dispatch:
-    inputs:
-      create_release:
-        description: 'Create new release'
-        required: true
-        type: boolean
+  workflow_dispatch: # allows manual triggering
+  push:
+    branches:
+      - master
+    paths: [
+      '.github/workflows/build.yml',
+      '.github/workflows/build-cmake-pkg.yml',
+      '**/CMakeLists.txt',
+      '**/.cmake',
+      '**/*.h',
+      '**/*.hpp',
+      '**/*.c',
+      '**/*.cpp'
+    ]
+
+  pull_request:
+    types: [opened, reopened]
+    paths: [
+      '.github/workflows/build.yml',
+      '.github/workflows/build-cmake-pkg.yml',
+      '**/CMakeLists.txt',
+      '**/.cmake',
+      '**/*.h',
+      '**/*.hpp',
+      '**/*.c',
+      '**/*.cpp'
+    ]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
   cancel-in-progress: true
 
 env:
-  CMAKE_ARGS: "-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON"
+  GGML_NLOOP: 3
+  GGML_N_THREAD: 1
+  LLAMA_LOG_COLORS: 1
+  LLAMA_LOG_PREFIX: 1
+  LLAMA_LOG_TIMESTAMPS: 1
 
 jobs:
-  windows-x64-win10-compat:
-    # 关键：用 windows-2022 才能兼容 Win10
-    runs-on: windows-2022
-
+  windows-latest:
+    runs-on: windows-2022  # 👈 关键：改为 Win10 兼容的编译机
+    strategy:
+      matrix:
+        include:
+          - build: 'cpu-x64 (static)'
+            arch: 'x64'
+            defines: '-G "Ninja Multi-Config" -D CMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake -DGGML_NATIVE=OFF -DLLAMA_BUILD_SERVER=ON -DGGML_RPC=ON -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF'
     steps:
-      - uses: actions/checkout@v6
+      - name: Clone
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Determine tag name
-        id: tag
-        uses: ./.github/actions/get-tag-name
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          key: windows-latest-${{ matrix.build }}
+          variant: ccache
+          evict-old-files: 1d
 
       - name: Install Ninja
         run: choco install ninja
 
       - name: Build
-        shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
-          cmake -S . -B build -G "Ninja Multi-Config" ^
-          -DCMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake ^
-          -DLLAMA_BUILD_BORINGSSL=ON ^
-          -DGGML_NATIVE=OFF ^
-          -DGGML_OPENMP=OFF ^
-          -DBUILD_SHARED_LIBS=OFF ^
-          -DLLAMA_VCPKG_TOOLCHAIN=OFF ^
-          -DCMAKE_SYSTEM_VERSION=10.0.17763.0 ^
-          ${{ env.CMAKE_ARGS }}
-          cmake --build build --config Release
+          cmake -S . -B build ${{ matrix.defines }} `
+            -DLLAMA_BUILD_BORINGSSL=ON
+          cmake --build build --config Release -j ${env:NUMBER_OF_PROCESSORS}
+
+      - name: Test
+        if: ${{ matrix.arch == 'x64' }}
+        run: |
+          cd build
+          ctest -L main -C Release --verbose --timeout 900
+
       - name: Pack
-        run: 7z a -snl llama-bin-win-cpu-x64-win10.zip .\build\bin\Release\*
+        run: 7z a -snl llama-bin-win-cpu-x64-static-win10.zip ./build/bin/Release/*
 
-      - uses: actions/upload-artifact@v6
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
         with:
-          path: llama-bin-win-cpu-x64-win10.zip
-          name: llama-bin-win-cpu-x64-win10.zip
+          name: llama-bin-win-cpu-x64-static-win10
+          path: llama-bin-win-cpu-x64-static-win10.zip
 
+  # ==========================
+  # 自动发布（带 TAG）
+  # ==========================
   release:
-    if: ${{ github.event.inputs.create_release == 'true' }}
+    needs: windows-latest
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-    runs-on: windows-2022
-    needs: [windows-x64-win10-compat]
-
     steps:
-      - uses: actions/download-artifact@v7
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
 
-      - uses: softprops/action-gh-release@v2
+      - name: Generate tag
+        id: tag
+        run: echo "tag=build-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.name }}
-          files: |
-            artifacts/llama-bin-win-cpu-x64-win10.zip
+          name: Windows 10 纯CPU静态版
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: artifacts/llama-bin-win-cpu-x64-static-win10.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
