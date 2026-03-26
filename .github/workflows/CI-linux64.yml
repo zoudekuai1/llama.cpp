@@ -1,0 +1,98 @@
+name: CI (Linux Static Only + CentOS7 Compatible)
+
+on:
+  workflow_dispatch: # allows manual triggering
+    inputs:
+      create_release:
+        description: 'Create new release'
+        required: true
+        type: boolean
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/release.yml'
+      - '**/CMakeLists.txt'
+      - '**/.cmake'
+      - '**/*.h'
+      - '**/*.hpp'
+      - '**/*.c'
+      - '**/*.cpp'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+  CMAKE_ARGS: "-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON -DGGML_RPC=ON"
+
+jobs:
+  # ==========================
+  # Linux x64 100% 纯静态 + 兼容 CentOS 7
+  # ==========================
+  linux-x64:
+    runs-on: ubuntu-20.04  # 👈 关键：用旧版编译器保证兼容老系统
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 安装依赖
+        run: sudo apt update && sudo apt install -y build-essential cmake
+
+      - name: 编译（100% 静态，无任何 .so 依赖）
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_STATIC=ON \
+            -DLLAMA_STATIC=ON \
+            -DCMAKE_C_FLAGS="-static -fPIC" \
+            -DCMAKE_CXX_FLAGS="-static -fPIC" \
+            -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++ -no-pie" \
+            -DGGML_OPENMP=OFF \
+            -DLLAMA_LLAMACPP_DISABLE_VERSION_CHECK=ON \
+            ${{ env.CMAKE_ARGS }}
+          cmake --build build --config Release -j $(nproc)
+
+      - name: 验证静态链接
+        run: |
+          cd build/bin
+          ldd llama-cli || echo "✅ 100% 静态链接，无系统依赖"
+
+      - name: 打包
+        run: |
+          cp LICENSE build/bin/
+          tar -czvf llama-bin-linux-x64-static-centos7.tar.gz -C build/bin .
+
+      - uses: actions/upload-artifact@v6
+        with:
+          path: llama-bin-linux-x64-static-centos7.tar.gz
+          name: llama-bin-linux-x64-static-centos7.tar.gz
+
+  # ==========================
+  # 发布 Release（带 TAG）
+  # ==========================
+  release:
+    if: ${{ github.event.inputs.create_release == 'true' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    needs: [linux-x64]
+
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: 生成 TAG
+        id: tag
+        run: echo "tag=centos7-static-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Linux x64 Static (CentOS 7 Compatible)
+          files: artifacts/llama-bin-linux-x64-static-centos7.tar.gz
