@@ -37,9 +37,9 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" \
             -DGGML_OPENMP=OFF \
             -DGGML_FORCE_OLD_ABI=ON \
-            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_EXAMPLES=ON \
             -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_TOOLS=OFF \
+            -DLLAMA_BUILD_TOOLS=ON \
             -DLLAMA_BUILD_SERVER=ON \
             -DGGML_RPC=ON \
             -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
