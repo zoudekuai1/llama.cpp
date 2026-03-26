@@ -45,7 +45,6 @@ jobs:
             -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
           cmake --build build -j $(nproc)
           pwd
-          ls ggml/
 
       # ======================
       # 调试：查找所有可执行文件
@@ -62,13 +61,13 @@ jobs:
 
       - name: Check static
         run: |
-          ls ggml/
-          ldd build/bin/Release/llama-cli || echo "✅ 100% static"
+          ls build/bin
+          ldd build/bin/llama-cli || echo "✅ 100% static"
 
       - name: Pack
         run: |
-          cp LICENSE build/bin/Release/
-          tar -czvf llama-bin-linux-x64-static-centos7.tar.gz -C build/bin/Release/ .
+          cp LICENSE build/bin/
+          tar -czvf llama-bin-linux-x64-static-centos7.tar.gz -C build/bin/ .
 
       - uses: actions/upload-artifact@v6
         with:
