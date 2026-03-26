@@ -44,6 +44,8 @@ jobs:
             -DGGML_RPC=ON \
             -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
           cmake --build build -j $(nproc)
+          pwd
+          ls ggml/
 
       # ======================
       # 调试：查找所有可执行文件
@@ -60,7 +62,7 @@ jobs:
 
       - name: Check static
         run: |
-          ls build/
+          ls ggml/
           ldd build/bin/Release/llama-cli || echo "✅ 100% static"
 
       - name: Pack
