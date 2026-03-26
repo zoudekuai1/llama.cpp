@@ -10,22 +10,10 @@ on:
   push:
     branches:
       - master
-    paths:
-      - '.github/workflows/release.yml'
-      - '**/CMakeLists.txt'
-      - '**/.cmake'
-      - '**/*.h'
-      - '**/*.hpp'
-      - '**/*.c'
-      - '**/*.cpp'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
   cancel-in-progress: true
-
-env:
-  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-  CMAKE_ARGS: "-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON -DGGML_RPC=ON"
 
 jobs:
   linux-x64:
@@ -48,7 +36,13 @@ jobs:
             -DCMAKE_CXX_FLAGS="-static" \
             -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" \
             -DGGML_OPENMP=OFF \
-            ${{ env.CMAKE_ARGS }}
+            -DGGML_FORCE_OLD_ABI=ON \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_TOOLS=OFF \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DGGML_RPC=ON \
+            -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
           cmake --build build -j $(nproc)
 
       - name: Check static
