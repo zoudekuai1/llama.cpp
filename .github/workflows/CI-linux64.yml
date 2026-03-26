@@ -12,7 +12,7 @@ on:
       - master
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -47,8 +47,8 @@ jobs:
 
       - name: Check static
         run: |
-          cd build/bin
-          ldd llama-cli || echo "✅ 100% static"
+          # 修复路径错误，确保一定找到二进制
+          ldd build/bin/llama-cli || echo "✅ 100% static"
 
       - name: Pack
         run: |
