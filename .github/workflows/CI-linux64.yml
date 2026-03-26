@@ -1,4 +1,4 @@
-name: CI (Linux Static Only + CentOS7 Compatible)
+name: CI-linux64 (Static CentOS7)
 
 on:
   workflow_dispatch:
@@ -47,18 +47,18 @@ jobs:
 
       - name: Check static
         run: |
-          # 修复路径错误，确保一定找到二进制
-          ldd build/bin/llama-cli || echo "✅ 100% static"
+          tree build/
+          ldd build/bin/Release/llama-cli || echo "✅ 100% static"
 
       - name: Pack
         run: |
-          cp LICENSE build/bin/
-          tar -czvf llama-bin-linux-x64-static-centos7.tar.gz -C build/bin .
+          cp LICENSE build/bin/Release/
+          tar -czvf llama-bin-linux-x64-static-centos7.tar.gz -C build/bin/Release/ .
 
       - uses: actions/upload-artifact@v6
         with:
           path: llama-bin-linux-x64-static-centos7.tar.gz
-          name: llama-bin-linux-x64-static-centos7.tar.gz
+          name: llama-bin-linux-x64-static-centos7
 
   release:
     if: ${{ github.event.inputs.create_release == 'true' }}
@@ -74,7 +74,7 @@ jobs:
         id: tag
         run: echo "tag=centos7-static-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Linux x64 Static (CentOS 7.9 Compatible)
