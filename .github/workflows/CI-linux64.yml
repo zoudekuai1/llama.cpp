@@ -45,9 +45,22 @@ jobs:
             -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
           cmake --build build -j $(nproc)
 
+      # ======================
+      # 调试：查找所有可执行文件
+      # ======================
+      - name: Find all built binaries
+        run: |
+          pwd
+          echo "====================查找 llama-cli ===================="
+          find build -name "llama-cli" -type f
+          echo "====================查找 llama-server ===================="
+          find build -name "llama-server" -type f
+          echo "====================列出 build 目录结构 ===================="
+          ls -laR build | head -100          
+
       - name: Check static
         run: |
-          tree build/
+          ls build/
           ldd build/bin/Release/llama-cli || echo "✅ 100% static"
 
       - name: Pack
