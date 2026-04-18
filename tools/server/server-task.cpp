@@ -1,5 +1,6 @@
 #include "server-task.h"
 
+#include "build-info.h"
 #include "chat.h"
 #include "common.h"
 #include "json-schema-to-grammar.h"
@@ -239,6 +240,7 @@ task_params server_task::params_from_json_cmpl(
         const llama_vocab * vocab,
         const common_params & params_base,
         const int n_ctx_slot,
+        const std::vector<llama_logit_bias> & logit_bias_eog,
         const json & data) {
     task_params params;
 
@@ -383,6 +385,8 @@ task_params server_task::params_from_json_cmpl(
             throw std::runtime_error(std::string("\"json_schema\": ") + e.what());
         }
     } else {
+        params.sampling.grammar = defaults.sampling.grammar;
+
         std::string grammar_str = json_value(data, "grammar", std::string());
         if (!grammar_str.empty()) {
             // grammar_type key is set by the server when converting chat template grammars
@@ -478,19 +482,17 @@ task_params server_task::params_from_json_cmpl(
     // Parse reasoning budget sampler parameters
     {
         const int32_t budget = json_value(data, "reasoning_budget_tokens", (int32_t) -1);
-        if (budget >= 0) {
-            const auto start_tag = json_value(data, "reasoning_budget_start_tag", std::string());
-            const auto end_tag   = json_value(data, "reasoning_budget_end_tag", std::string());
-            const auto message   = json_value(data, "reasoning_budget_message", std::string());
-            params.sampling.reasoning_budget_tokens = budget;
+        const auto start_tag = json_value(data, "reasoning_budget_start_tag", std::string());
+        const auto end_tag   = json_value(data, "reasoning_budget_end_tag", std::string());
+        const auto message   = json_value(data, "reasoning_budget_message", std::string());
+        params.sampling.reasoning_budget_tokens = budget;
 
-            if (!start_tag.empty()) {
-                params.sampling.reasoning_budget_start = common_tokenize(vocab, start_tag, false, true);
-            }
-            if (!end_tag.empty()) {
-                params.sampling.reasoning_budget_end = common_tokenize(vocab, end_tag, false, true);
-                params.sampling.reasoning_budget_forced = common_tokenize(vocab, message + end_tag, false, true);
-            }
+        if (!start_tag.empty()) {
+            params.sampling.reasoning_budget_start = common_tokenize(vocab, start_tag, false, true);
+        }
+        if (!end_tag.empty()) {
+            params.sampling.reasoning_budget_end = common_tokenize(vocab, end_tag, false, true);
+            params.sampling.reasoning_budget_forced = common_tokenize(vocab, message + end_tag, false, true);
 
             SRV_DBG("reasoning budget: tokens=%d, generation_prompt='%s', start=%zu toks, end=%zu toks, forced=%zu toks\n",
                 budget, params.sampling.generation_prompt.c_str(),
@@ -564,7 +566,7 @@ task_params server_task::params_from_json_cmpl(
         if (params.sampling.ignore_eos) {
             params.sampling.logit_bias.insert(
                     params.sampling.logit_bias.end(),
-                    defaults.sampling.logit_bias_eog.begin(), defaults.sampling.logit_bias_eog.end());
+                    logit_bias_eog.begin(), logit_bias_eog.end());
         }
     }
 
@@ -724,6 +726,8 @@ json server_task_result_cmpl_final::to_json() {
             return stream ? to_json_oaicompat_chat_stream() : to_json_oaicompat_chat();
         case TASK_RESPONSE_TYPE_OAI_RESP:
             return stream ? to_json_oaicompat_resp_stream() : to_json_oaicompat_resp();
+        case TASK_RESPONSE_TYPE_OAI_ASR:
+            return to_json_oaicompat_asr();
         case TASK_RESPONSE_TYPE_ANTHROPIC:
             return stream ? to_json_anthropic_stream() : to_json_anthropic();
         default:
@@ -788,7 +792,7 @@ json server_task_result_cmpl_final::to_json_oaicompat() {
         })},
         {"created",            t},
         {"model",              oaicompat_model},
-        {"system_fingerprint", build_info},
+        {"system_fingerprint", std::string(llama_build_info())},
         {"object",             "text_completion"},
         {"usage",              usage_json_oaicompat()},
         {"id", oaicompat_cmpl_id}
@@ -836,7 +840,7 @@ json server_task_result_cmpl_final::to_json_oaicompat_chat() {
         {"choices",            json::array({choice})},
         {"created",            t},
         {"model",              oaicompat_model},
-        {"system_fingerprint", build_info},
+        {"system_fingerprint", std::string(llama_build_info())},
         {"object",             "chat.completion"},
         {"usage",              usage_json_oaicompat()},
         {"id", oaicompat_cmpl_id}
@@ -873,7 +877,7 @@ json server_task_result_cmpl_final::to_json_oaicompat_chat_stream() {
             {"created", t},
             {"id", oaicompat_cmpl_id},
             {"model", oaicompat_model},
-            {"system_fingerprint", build_info},
+            {"system_fingerprint", std::string(llama_build_info())},
             {"object", "chat.completion.chunk"},
         });
     }
@@ -889,7 +893,7 @@ json server_task_result_cmpl_final::to_json_oaicompat_chat_stream() {
         {"created",            t},
         {"id",                 oaicompat_cmpl_id},
         {"model",              oaicompat_model},
-        {"system_fingerprint", build_info},
+        {"system_fingerprint", std::string(llama_build_info())},
         {"object",             "chat.completion.chunk"},
     });
 
@@ -901,7 +905,7 @@ json server_task_result_cmpl_final::to_json_oaicompat_chat_stream() {
             {"created",            t},
             {"id",                 oaicompat_cmpl_id},
             {"model",              oaicompat_model},
-            {"system_fingerprint", build_info},
+            {"system_fingerprint", std::string(llama_build_info())},
             {"object",             "chat.completion.chunk"},
             {"usage",              usage_json_oaicompat()},
         });
@@ -1099,6 +1103,21 @@ json server_task_result_cmpl_final::to_json_oaicompat_resp_stream() {
     });
 
     return server_sent_events;
+}
+
+json server_task_result_cmpl_final::to_json_oaicompat_asr() {
+    json event = json {
+        {"type",  "transcript.text.done"},
+        {"text",  content},
+        {"usage", json {
+            {"type",         "tokens"},
+            {"input_tokens",  n_prompt_tokens},
+            {"output_tokens", n_decoded},
+            {"total_tokens",  n_decoded + n_prompt_tokens},
+            {"input_tokens_details", json { {"cached_tokens", n_prompt_tokens_cache} }},
+        }},
+    };
+    return event;
 }
 
 json server_task_result_cmpl_final::to_json_anthropic() {
@@ -1399,6 +1418,8 @@ json server_task_result_cmpl_partial::to_json() {
             return to_json_oaicompat_chat();
         case TASK_RESPONSE_TYPE_OAI_RESP:
             return to_json_oaicompat_resp();
+        case TASK_RESPONSE_TYPE_OAI_ASR:
+            return to_json_oaicompat_asr();
         case TASK_RESPONSE_TYPE_ANTHROPIC:
             return to_json_anthropic();
         default:
@@ -1449,7 +1470,7 @@ json server_task_result_cmpl_partial::to_json_oaicompat() {
         })},
         {"created",            t},
         {"model",              oaicompat_model},
-        {"system_fingerprint", build_info},
+        {"system_fingerprint", std::string(llama_build_info())},
         {"object",             "text_completion"},
         {"id",                 oaicompat_cmpl_id}
     };
@@ -1486,7 +1507,7 @@ json server_task_result_cmpl_partial::to_json_oaicompat_chat() {
             {"created", t},
             {"id", oaicompat_cmpl_id},
             {"model", oaicompat_model},
-            {"system_fingerprint", build_info},
+            {"system_fingerprint", std::string(llama_build_info())},
             {"object", "chat.completion.chunk"},
         });
     };
@@ -1647,6 +1668,14 @@ json server_task_result_cmpl_partial::to_json_oaicompat_resp() {
         }
     }
     return events;
+}
+
+json server_task_result_cmpl_partial::to_json_oaicompat_asr() {
+    json event = json {
+        {"type", "transcript.text.delta"},
+        {"delta", content},
+    };
+    return event;
 }
 
 json server_task_result_cmpl_partial::to_json_anthropic() {
@@ -2010,7 +2039,7 @@ server_prompt * server_prompt_cache::alloc(const server_prompt & prompt, size_t 
 bool server_prompt_cache::load(server_prompt & prompt, const server_tokens & tokens_new, llama_context * ctx, int32_t id_slot) {
     const int lcp_best = prompt.tokens.get_common_prefix(tokens_new);
 
-    float f_keep_best = float(lcp_best) / prompt.tokens.size();
+    float f_keep_best = prompt.tokens.size() > 0 ? float(lcp_best) / prompt.tokens.size() : -1.0f; // empty slot: any cache entry wins
     float sim_best    = float(lcp_best) / tokens_new.size();
 
     SRV_WRN(" - looking for better prompt, base f_keep = %.3f, sim = %.3f\n", f_keep_best, sim_best);
