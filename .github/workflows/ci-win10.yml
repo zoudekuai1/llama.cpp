@@ -1,30 +1,26 @@
 name: CI (Win10兼容x64)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # allows manual triggering
   push:
     branches:
       - master
     paths: [
-      '.github/workflows/release.yml',
+      '.github/workflows/build.yml',
+      '.github/workflows/build-cmake-pkg.yml',
       '**/CMakeLists.txt',
       '**/.cmake',
       '**/*.h',
       '**/*.hpp',
       '**/*.c',
-      '**/*.cpp',
-      '**/*.cu',
-      '**/*.cuh',
-      '**/*.swift',
-      '**/*.m',
-      '**/*.metal',
-      '**/*.comp',
-      '**/*.glsl'
+      '**/*.cpp'
     ]
 
   pull_request:
     types: [opened, reopened]
     paths: [
+      '.github/workflows/build.yml',
+      '.github/workflows/build-cmake-pkg.yml',
       '**/CMakeLists.txt',
       '**/.cmake',
       '**/*.h',
@@ -46,25 +42,18 @@ env:
 
 jobs:
   windows-latest:
-    runs-on: windows-2022
+    runs-on: windows-2022  # 👈 关键：改为 Win10 兼容的编译机
     strategy:
       matrix:
         include:
           - build: 'cpu-x64 (static)'
             arch: 'x64'
-            defines: '-G "Ninja Multi-Config" -D CMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake -DGGML_NATIVE=OFF -DLLAMA_BUILD_SERVER=ON -DGGML_RPC=ON -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_FATAL_WARNINGS=ON'
+            defines: '-G "Ninja Multi-Config" -D CMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake -DGGML_NATIVE=OFF -DLLAMA_BUILD_SERVER=ON -DGGML_RPC=ON -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF'
     steps:
       - name: Clone
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          cache: "npm"
-          cache-dependency-path: "tools/ui/package-lock.json"
 
       - name: ccache
         uses: ggml-org/ccache-action@v1.2.21
@@ -82,17 +71,6 @@ jobs:
             -DLLAMA_BUILD_BORINGSSL=ON
           cmake --build build --config Release -j ${env:NUMBER_OF_PROCESSORS}
 
-      - name: Build Web UI
-        run: |
-          cd tools/ui
-          npm ci
-          npm run build
-
-      - name: ccache-clear
-        uses: ./.github/actions/ccache-clear
-        with:
-          key: windows-latest-${{ matrix.build }}
-
       - name: Test
         if: ${{ matrix.arch == 'x64' }}
         run: |
@@ -100,11 +78,7 @@ jobs:
           ctest -L main -C Release --verbose --timeout 900
 
       - name: Pack
-        run: |
-          if (Test-Path tools/ui/dist) {
-            Copy-Item -Recurse tools/ui/dist build/bin/Release/ui
-          }
-          7z a -snl llama-bin-win-cpu-x64-static-win10.zip ./build/bin/Release/*
+        run: 7z a -snl llama-bin-win-cpu-x64-static-win10.zip ./build/bin/Release/*
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
