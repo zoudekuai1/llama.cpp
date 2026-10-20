@@ -1,13 +1,32 @@
-ARG ONEAPI_VERSION=2025.3.3-0-devel-ubuntu24.04
+ARG ONEAPI_VERSION=2026.1.1-devel-ubuntu24.04
 ARG BUILD_DATE=N/A
 ARG APP_VERSION=N/A
 ARG APP_REVISION=N/A
 
 ## Build Image
 
-FROM intel/deep-learning-essentials:$ONEAPI_VERSION AS build
+ARG NODE_VERSION=24
 
-ARG GGML_SYCL_F16=OFF
+FROM docker.io/node:$NODE_VERSION AS web
+
+ARG APP_VERSION
+
+WORKDIR /app/tools/ui
+
+COPY tools/ui/package.json tools/ui/package-lock.json ./
+RUN npm ci
+
+COPY tools/ui/ ./
+RUN LLAMA_BUILD_NUMBER="$APP_VERSION" npm run build
+
+FROM docker.io/intel/deep-learning-essentials:$ONEAPI_VERSION AS build
+
+RUN echo "Download oneDNN installation package" && \
+    wget https://registrationcenter-download.intel.com/akdlm/IRC_NAS/94c3dbac-0852-45be-a57d-21c204cada3e/intel-onednn-2026.0.2.46_offline.sh -O intel-onednn_offline.sh && \
+    echo "Install oneDNN components" && \
+    bash intel-onednn_offline.sh -s -a --silent --eula accept
+
+ARG GGML_SYCL_F16=ON
 ARG LEVEL_ZERO_VERSION=1.28.2
 ARG LEVEL_ZERO_UBUNTU_VERSION=u24.04
 RUN apt-get update && \
@@ -22,13 +41,16 @@ WORKDIR /app
 
 COPY . .
 
+COPY --from=web /app/tools/ui/dist tools/ui/dist
+
 RUN if [ "${GGML_SYCL_F16}" = "ON" ]; then \
         echo "GGML_SYCL_F16 is set" \
-        && export OPT_SYCL_F16="-DGGML_SYCL_F16=ON"; \
+        && export OPT_SYCL_F16="-DGGML_SYCL_F16=ON" \
+        && export SYCL_PROGRAM_COMPILE_OPTIONS="-cl-fp32-correctly-rounded-divide-sqrt"; \
     fi && \
     echo "Building with dynamic libs" && \
     cmake -B build -DGGML_NATIVE=OFF -DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DLLAMA_BUILD_TESTS=OFF ${OPT_SYCL_F16} && \
-    cmake --build build --config Release -j$(nproc)
+    cmake --build build --config Release -j$((($(nproc)+1)/2))
 
 RUN mkdir -p /app/lib && \
     find build -name "*.so*" -exec cp -P {} /app/lib \;
@@ -42,7 +64,7 @@ RUN mkdir -p /app/full \
     && cp requirements.txt /app/full \
     && cp .devops/tools.sh /app/full/tools.sh
 
-FROM intel/deep-learning-essentials:$ONEAPI_VERSION AS base
+FROM docker.io/intel/oneapi-toolkit:$ONEAPI_VERSION AS base
 
 ARG BUILD_DATE=N/A
 ARG APP_VERSION=N/A
@@ -85,7 +107,7 @@ RUN mkdir /tmp/neo/ && cd /tmp/neo/ \
   && dpkg --install *.deb
 
 RUN apt-get update \
-    && apt-get install -y libgomp1 curl ffmpeg \
+    && apt-get install -y libgomp1 curl ffmpeg openssl libssl-dev \
     && apt autoremove -y \
     && apt clean -y \
     && rm -rf /tmp/* /var/tmp/* \
@@ -124,7 +146,7 @@ ENTRYPOINT ["/app/tools.sh"]
 FROM base AS light
 
 COPY --from=build /app/lib/ /app
-COPY --from=build /app/full/llama-cli /app/full/llama-completion /app
+COPY --from=build /app/full/llama /app/full/llama-cli /app/full/llama-completion /app/
 
 WORKDIR /app
 
@@ -134,9 +156,10 @@ ENTRYPOINT [ "/app/llama-cli" ]
 FROM base AS server
 
 ENV LLAMA_ARG_HOST=0.0.0.0
+ENV LLAMA_ARG_PORT=8080
 
 COPY --from=build /app/lib/ /app
-COPY --from=build /app/full/llama-server /app
+COPY --from=build /app/full/llama /app/full/llama-server /app/
 
 WORKDIR /app
 
