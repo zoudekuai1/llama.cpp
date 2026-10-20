@@ -92,4 +92,4 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Linux x64 Static (CentOS 7.9 Compatible)
-          files: artifacts/llama-bin-linux-x64-static-centos7.tar.gz
+          files: artifacts/**/*.tar.gz
